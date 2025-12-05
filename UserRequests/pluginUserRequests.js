@@ -103,10 +103,7 @@ function runScriptUserReports() {
         @media (min-width: 1180px) and (max-width: 1480px) {
           #user-listener-requests,
           #user-listener-container {
-            position: relative;
-            top: auto;
-            bottom: 8px;
-            left: 20px;
+            /* Nowhere it can go */
             display: none;
           }
         }
@@ -198,14 +195,6 @@ function runScriptUserReports() {
       lastUsers = users;
       userListContainer.innerHTML = '';
 
-      // Add user-offline placeholder elements
-      const maxUsers = 6;
-      for (let i = 0; i < maxUsers; i++) {
-        const userOfflineElement = document.createElement('div');
-        userOfflineElement.classList.add('user-offline');
-        userListContainer.appendChild(userOfflineElement);
-      }
-
       // Find our entry by connectionId
       const myEntry = users.find(u => u.connectionId === myConnectionId);
       if (myEntry) {
@@ -216,7 +205,6 @@ function runScriptUserReports() {
         }
       }
 
-      // Replace user-offline elements with actual user elements
       users.forEach((user) => {
         const userElement = document.createElement('div');
         userElement.classList.add('user');
@@ -253,15 +241,13 @@ function runScriptUserReports() {
             const newSelection = currentSelection === userRequestListening ? userRequestTuning : userRequestListening;
             currentSelection = newSelection;
 
-            // Send selection update via data_plugins WebSocket
-            if (pluginSocket && pluginSocket.readyState === WebSocket.OPEN) {
-              pluginSocket.send(JSON.stringify({
-                type: 'userRequests',
-                action: 'updateSelection',
-                connectionId: myConnectionId,
-                selection: newSelection
-              }));
-            }
+            // Send selection update using queued WebSocket sender
+            sendWS({
+              type: 'userRequests',
+              action: 'updateSelection',
+              connectionId: myConnectionId,
+              selection: newSelection
+            });
 
             // Handle local tuning lock
             if (newSelection === userRequestListening) {
@@ -276,13 +262,7 @@ function runScriptUserReports() {
           });
         }
 
-        // Replace user-offline placeholder with actual user element
-        const userOfflineElement = userListContainer.querySelector('.user-offline');
-        if (userOfflineElement) {
-          userOfflineElement.replaceWith(userElement);
-        } else {
-          userListContainer.appendChild(userElement);
-        }
+        userListContainer.appendChild(userElement);
       });
     }
 
@@ -362,6 +342,38 @@ function runScriptUserReports() {
     }
 
     // Connect to the /data_plugins WebSocket
+    // Global helpers
+    let sendQueue = [];
+    let registrationPromise = null;
+
+    // Wrap all websocket sends through this:
+    function sendWS(message) {
+      // Only send once socket is open AND registration completed
+      if (
+        pluginSocket &&
+        pluginSocket.readyState === WebSocket.OPEN &&
+        isRegistered
+      ) {
+        pluginSocket.send(JSON.stringify(message));
+      } else {
+        // Queue it for later
+        sendQueue.push(message);
+      }
+    }
+
+    function flushQueue() {
+      if (
+        pluginSocket &&
+        pluginSocket.readyState === WebSocket.OPEN &&
+        isRegistered
+      ) {
+        sendQueue.forEach(msg => {
+          pluginSocket.send(JSON.stringify(msg));
+        });
+        sendQueue = [];
+      }
+    }
+
     function connectPluginSocket() {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const wsUrl = `${protocol}//${window.location.host}/data_plugins`;
@@ -370,10 +382,24 @@ function runScriptUserReports() {
 
       pluginSocket.onopen = () => {
         console.log(`[${pluginName}] Connected to data_plugins WebSocket`);
-        // Register first, then send heartbeat
-        registerWithServer().then(() => {
-          sendHeartbeat();
-        });
+
+        // Mark registration as pending
+        isRegistered = false;
+
+        // Start registration & store the promise
+        registrationPromise = registerWithServer()
+          .then(() => {
+            isRegistered = true;
+
+            // Flush any queued messages that tried to send before ready
+            flushQueue();
+
+            // Start heartbeat after registration
+            sendHeartbeat();
+          })
+          .catch(err => {
+            console.error(`[${pluginName}] Registration failed:`, err);
+          });
       };
 
       pluginSocket.onmessage = (event) => {
@@ -383,7 +409,7 @@ function runScriptUserReports() {
             updateUserList(data.users || []);
           }
         } catch (e) {
-          // Not for this
+          // Ignore non-JSON messages
         }
       };
 
@@ -391,11 +417,15 @@ function runScriptUserReports() {
         setTimeout(() => {
             console.log(`[${pluginName}] Disconnected from data_plugins WebSocket, reconnecting...`);
         }, 800);
+        // Cleanup
         if (heartbeatInterval) {
           clearInterval(heartbeatInterval);
           heartbeatInterval = null;
         }
-        isRegistered = false; // Need to re-register on reconnect
+
+        isRegistered = false;
+
+        // Attempt reconnect
         setTimeout(connectPluginSocket, 3000);
       };
 
@@ -406,10 +436,10 @@ function runScriptUserReports() {
 
     // Start sending periodic heartbeats
     function startHeartbeat() {
-      // Send heartbeat every 3 seconds to maintain connection
+      // Send heartbeat every interval to maintain connection
       heartbeatInterval = setInterval(() => {
         sendHeartbeat();
-      }, 3000);
+      }, 5000);
     }
 
     // Insert the container into the page

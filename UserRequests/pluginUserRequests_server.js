@@ -310,7 +310,7 @@ function buildUsersArray() {
         });
     }
 
-    // Sort by user number, then by connection duration
+    // Sort by user number, then by connection duration (longest first within same user)
     usersArray.sort((a, b) => {
         if (a.userNumber !== b.userNumber) return a.userNumber - b.userNumber;
         return b.connectionDuration - a.connectionDuration; // Longer duration first
@@ -413,10 +413,10 @@ function broadcastUserUpdate() {
     }
 }
 
-// Clean up stale connections if no heartbeat in 10 seconds
+// Clean up stale connections if no heartbeat
 function cleanupStaleConnections() {
     const now = Date.now();
-    const staleThreshold = 10000; // 10 seconds
+    const staleThreshold = 15000;
     let removed = false;
 
     // Clean up tracked connections that timed out
@@ -461,7 +461,7 @@ function startUserTracking() {
         connectToPluginsWs();
     }, 5000);
 
-    // Broadcast updates and clean up stale connections every 3 seconds
+    // Broadcast updates and clean up stale connections every interval
     userUpdateInterval = setInterval(() => {
         cleanupStaleConnections();
         broadcastUserUpdate();

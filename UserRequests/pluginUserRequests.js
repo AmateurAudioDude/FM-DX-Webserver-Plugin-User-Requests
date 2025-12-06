@@ -478,15 +478,19 @@ if (wrapperOuter) {
 copyBackgroundColor();
 
 window.addEventListener('DOMContentLoaded', (event) => {
-    setInterval(() => {
+    const intervalId = setInterval(() => {
         copyBackgroundColor();
-    }, 200);
+    }, 1000);
 
-    setInterval(() => {
-        copyBackgroundColor();
-    }, 2000);
+    setTimeout(() => {
+        clearInterval(intervalId);
+    }, 10000);
 });
 
-runScriptUserReports();
+window.addEventListener('DOMContentLoaded', (event) => {
+    setTimeout(() => {
+        runScriptUserReports();
+    }, 400);
+});
 
 })();
